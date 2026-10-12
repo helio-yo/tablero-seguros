@@ -165,6 +165,37 @@ def relatividades(p, m_freq, m_sev):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# BONUS · Guardar cada cotización en una Google Sheet (memoria externa)
+#   - Las credenciales viven SOLO en st.secrets (nunca en el código).
+#   - Si no hay credenciales o falla Google, el cotizador sigue funcionando.
+# ─────────────────────────────────────────────────────────────────────────────
+@st.cache_resource
+def hoja():
+    import gspread
+    gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+    return gc.open_by_url(st.secrets["sheet_url"]).sheet1
+
+def sheets_configurado():
+    try:
+        return "gcp_service_account" in st.secrets and "sheet_url" in st.secrets
+    except Exception:
+        return False
+
+def guardar_cotizacion(p, pp_glm, tarifa):
+    """Devuelve (ok, mensaje). Nunca lanza excepción."""
+    if not sheets_configurado():
+        return None, "Guardado en Google Sheets no configurado (faltan secrets)."
+    try:
+        hoja().append_row([pd.Timestamp.now().isoformat(),
+                           p["edad_conductor"], p["cobertura"], p["sexo"], p["uso"],
+                           p["combustible"], p["antiguedad"], p["potencia"], p["bonus"],
+                           round(float(pp_glm), 2), round(float(tarifa), 2)])
+        return True, "Cotización guardada ✔"
+    except Exception as e:
+        return False, f"No se pudo guardar en Google Sheets: {type(e).__name__}: {e}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 4 · Preparar datos + modelos (una sola vez, ANTES de los tabs)
 # ─────────────────────────────────────────────────────────────────────────────
 datos = cargar_datos()
@@ -272,6 +303,11 @@ with tab_cotiza:
               "bonus": c4.slider("Bonus-malus", 0, 25, 5)}
     if st.button("Cotizar", type="primary"):
         st.session_state["perfil"] = perfil
+        _f, _s, _pp_glm, _ = cotizar_glm(perfil, m_freq, m_sev, m_agg)
+        ok, msg = guardar_cotizacion(perfil, _pp_glm, _pp_glm / (1 - gastos - margen))
+        if ok is True:    st.success(msg)
+        elif ok is False: st.warning(msg)
+        else:             st.info(msg)
 
     if "perfil" in st.session_state:
         p = st.session_state["perfil"]
@@ -318,3 +354,17 @@ with tab_cotiza:
         st.pyplot(fig3)
         st.caption(f"Prima base (perfil de referencia): ${pp_ref:,.2f} → tu prima pura: ${pp_glm:,.2f}. "
                    "Rojo = pagas más · verde = pagas menos.")
+
+    # ---- BONUS: últimas cotizaciones guardadas ----
+    if sheets_configurado():
+        with st.expander("Últimas cotizaciones guardadas (Google Sheet)"):
+            try:
+                # UNFORMATTED_VALUE: trae los números crudos (238.22), no el texto con
+                # formato regional ("238,22"), que pandas/gspread leerían como 23822.
+                reg = pd.DataFrame(hoja().get_all_records(value_render_option="UNFORMATTED_VALUE"))
+                cols = ["fecha", "edad", "cobertura", "sexo", "uso", "combustible",
+                        "antiguedad", "potencia", "bonus", "prima_glm", "tarifa"]
+                reg = reg[[c for c in cols if c in reg.columns]]
+                st.dataframe(reg.tail(10), use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.caption(f"No se pudo leer la hoja: {type(e).__name__}")
