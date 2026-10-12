@@ -359,7 +359,12 @@ with tab_cotiza:
     if sheets_configurado():
         with st.expander("Últimas cotizaciones guardadas (Google Sheet)"):
             try:
-                st.dataframe(pd.DataFrame(hoja().get_all_records()).tail(10),
-                             use_container_width=True, hide_index=True)
+                # UNFORMATTED_VALUE: trae los números crudos (238.22), no el texto con
+                # formato regional ("238,22"), que pandas/gspread leerían como 23822.
+                reg = pd.DataFrame(hoja().get_all_records(value_render_option="UNFORMATTED_VALUE"))
+                cols = ["fecha", "edad", "cobertura", "sexo", "uso", "combustible",
+                        "antiguedad", "potencia", "bonus", "prima_glm", "tarifa"]
+                reg = reg[[c for c in cols if c in reg.columns]]
+                st.dataframe(reg.tail(10), use_container_width=True, hide_index=True)
             except Exception as e:
                 st.caption(f"No se pudo leer la hoja: {type(e).__name__}")
